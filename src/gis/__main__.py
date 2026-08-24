@@ -29,7 +29,7 @@ def set_color_by_year(year):
     """Return CSS color based on given year value."""
     year = int(year)
     if not year:
-        return "white"
+        return "gray"
 
     if year < 1850:
         return "red"
@@ -105,17 +105,53 @@ def print_row(label, value):
 def make_map(filename, coordinates):
     """Generate map (HTML file) using given coordinates."""
     # Create map
-    geomap = folium.Map(location=COUNTY_CENTER, zoom_start=12)
+    # tiles = "cartodb-dark-matter"
+    tiles = "Cartodb Positron"
+    geomap = folium.Map(location=COUNTY_CENTER, zoom_start=13, tiles=tiles)
 
-    # Add satellite image layer
-    esri_satellite = folium.TileLayer(
+    # Esri Wayback tile template URL for year 2014
+    wayback_url = (
+        "https://wayback-b.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/"
+        "WMTS/1.0.0/default028mm/MapServer/tile/24007/{z}/{y}/{x}"
+    )
+
+    # Inject Wayback layer
+    folium.TileLayer(
+        tiles=wayback_url,
+        attr="Esri, Maxar, Earthstar Geographics",
+        name=f"Esri Wayback (2014)",
+        overlay=False,
+        control=True,
+    ).add_to(geomap)
+
+    # Add modern satellite image layer
+    folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         attr="Esri",
         name="Esri Satellite",
+        overlay=False,
+        control=True,
+    ).add_to(geomap)
+
+    # Add Esri World Roads Layer
+    esri_roads_url = (
+        "https://server.arcgisonline.com/ArcGIS/rest/services/"
+        "Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"
+    )
+
+    folium.map.CustomPane("esri_pane", z_index=500).add_to(
+        geomap
+    )  # Keep roads above basemap
+
+    folium.raster_layers.TileLayer(
+        tiles=esri_roads_url,
+        attr="Esri, HERE, Garmin, © OpenStreetMap contributors",
+        name="Esri World Roads (Transportation)",
         overlay=True,
         control=True,
-    )
-    esri_satellite.add_to(geomap)
+        opacity=0.8,
+        pane="esri_pane",
+    ).add_to(geomap)
 
     # Add map layer controls for user
     folium.LayerControl().add_to(geomap)
@@ -127,18 +163,8 @@ def make_map(filename, coordinates):
         if args.show_prop_lines:
             # Draw property lines and points
             folium.PolyLine(
-                locations=points, color="black", weight=2, opacity=1
+                locations=points, color="white", weight=1, opacity=1
             ).add_to(geomap)
-
-            for point in points:
-                folium.Circle(
-                    location=point,
-                    radius=0.3,
-                    color="black",
-                    fill=True,
-                    fill_color="black",
-                    fill_opacity=1,
-                ).add_to(geomap)
 
         # Set popup info
         popup = folium.Popup(item["html"], max_width=250, min_width=150)
@@ -323,7 +349,6 @@ def main(args):
                             f"<div>Township: {township}</div>",
                             f"<div>Tax district: {tax_district}</div>",
                             f"<div>Neighborhood: {nh}</div>",
-                            f"<div>Acreage: {acres:.2f}</div>",
                             f"<div>Legal: {legal_values}</div>",
                             f"<div>Owner: {owner}</div>",
                         ]
@@ -343,25 +368,44 @@ def main(args):
                     else:
                         html_list.append(f"<div>Description: {desc}</div>")
 
+                    year_sold = get(attr, "AMDTSL")
+                    if year_sold:
+                        html_list.append(f"<div>Year sold: {str(year_sold)[:4]}</div>")
+
                     if year:
                         qlty_grade = get(attr, "XXQGDS")
-                        sq_feet = get(attr, "AHFNAR")
+                        sq_feet = f'{int(get(attr, "AHFNAR")):,}'
                         stories = get(attr, "XGSTPR")
-                        bedrooms = get(attr, "AHBED_")
-                        bathrooms = get(attr, "AHBTH_")
                         basement = get(attr, "XXBMYN")
+                        fmv = f'${get(attr, "JMTCTM"):,}'
 
                         html_list.extend(
                             [
-                                f"<div>Year built: {year}</div>",
+                                f"<div>Year built: <strong>{year}</strong></div>",
                                 f"<div>Grade: {qlty_grade}</div>",
+                                f"<div>Market value: <strong>{fmv}</strong></div>",
                                 f"<div>Sq. feet: {sq_feet}</div>",
-                                f"<div>Stories: {stories}</div>",
-                                f"<div>Bedrooms: {bedrooms}</div>",
-                                f"<div>Bathrooms: {bathrooms}</div>",
                                 f"<div>Basement: {basement}</div>",
+                                f"<div>Stories: {stories}</div>",
                             ]
                         )
+
+                        bedrooms = get(attr, "AHBED_")
+                        if bedrooms:
+                            html_list.append(f"<div>Bedrooms: {bedrooms}</div>")
+
+                        bathrooms = get(attr, "AHBTH_")
+                        if bathrooms:
+                            html_list.append(f"<div>Bathrooms: {bathrooms}</div>")
+
+                    else:
+                        land_luv = f'${get(attr, "AKLCPR"):,}'
+                        html_list.append(
+                            f"<div>Land value: <strong>{land_luv}</strong></div>"
+                        )
+
+                    if acres:
+                        html_list.append(f"<div>Acreage: <strong>{acres:.2f}</strong></div>")
 
                     html_list.append("</div>")
                     popup_html = "".join(html_list)
