@@ -18,6 +18,8 @@ def get(m, key):
     value = m[key]
     if value:
         if isinstance(value, str):
+            if "\\" in value:
+                value = value.replace("\\", "/")
             return value.strip()
         return value
     elif value is None:
@@ -25,11 +27,35 @@ def get(m, key):
     return value
 
 
+def string_map_vals(m, keys, sep=", "):
+    return sep.join([v for k in keys if (v := get(m, k))])
+
+
+def make_row_div(label, value, bold_val=False):
+    if bold_val:
+        value = f"<strong>{value}</strong>"
+
+    return f"<div><em>{label}</em>: {value}</div>"
+
+
+def fmt_number(num, accounting=False):
+    try:
+        if accounting:
+            return f"${num:,}"
+        return f"{num:,}"
+    except ValueError:
+        return num
+
+
 def set_color_by_year(year):
     """Return CSS color based on given year value."""
-    year = int(year)
+    try:
+        year = int(year)
+    except ValueError:
+        return "white"
+
     if not year:
-        return "gray"
+        return "white"
 
     if year < 1850:
         return "red"
@@ -119,7 +145,7 @@ def make_map(filename, coordinates):
     folium.TileLayer(
         tiles=wayback_url,
         attr="Esri, Maxar, Earthstar Geographics",
-        name=f"Esri Wayback (2014)",
+        name="Esri Wayback (2014)",
         overlay=False,
         control=True,
     ).add_to(geomap)
@@ -163,7 +189,7 @@ def make_map(filename, coordinates):
         if args.show_prop_lines:
             # Draw property lines and points
             folium.PolyLine(
-                locations=points, color="white", weight=1, opacity=1
+                locations=points, color="white", weight=2, opacity=1
             ).add_to(geomap)
 
         # Set popup info
@@ -178,10 +204,11 @@ def make_map(filename, coordinates):
             location=[center_lat, center_lng],
             radius=5,
             color=color,
+            weight=2,
             popup=popup,
             fill=True,
             fill_color=color,
-            fill_opacity=1,
+            fill_opacity=0.3,
         ).add_to(geomap)
 
     # Generate map HTML file
@@ -195,6 +222,7 @@ def main(args):
     json_results = []
     coordinates = []
     legal_fields = ["AKLAD1", "AKLAD2", "AKLAD3"]
+    taxpayer_fields = ["OWADR1", "OWADR2", "OWCITY", "OWSTA", "OWZIPA"]
     divider = "=================================================================="
 
     # Set API query parameters
@@ -268,10 +296,7 @@ def main(args):
                     city_code = get(attr, "AKCYCD")
                     print_row("City code", city_code)
 
-                    legal_values = "; ".join(
-                        [v for a in legal_fields if (v := get(attr, a))]
-                    )
-
+                    legal_values = string_map_vals(attr, legal_fields, "; ")
                     print_row("Legal", legal_values)
 
                     year = get(attr, "AHACYR")
@@ -314,25 +339,13 @@ def main(args):
                     if not geometry.get("rings"):
                         continue
 
-                    parcel = get(attr, "AKPAR_")
-                    owner = get(attr, "OWNAM1")
-                    nh_code = get(attr, "AKNECD")
-                    tax_district = get(attr, "XXDSDS")
-                    st_name = get(attr, "AKPSTN")
-                    road = get(attr, "AKPSTP")
-                    city = get(attr, "XXCYDS")
-                    township = get(attr, "XXTWDS")
-                    nh = get(attr, "XXNEDS")
-                    acres = get(attr, "ACRES")
-                    desc = get(attr, "XXDDC1")
-                    legal_values = "; ".join(
-                        [v for a in legal_fields if (v := get(attr, a))]
-                    )
-
                     # Start a list of HTML for this parcel's popup info
                     html_list = ['<div style="display: block">']
 
                     phys_addr = get(attr, "AKPST_")
+                    st_name = get(attr, "AKPSTN")
+                    road = get(attr, "AKPSTP")
+
                     if phys_addr:
                         html_list.append(
                             f"<div><strong>{phys_addr} {st_name} {road}</strong></div>"
@@ -344,68 +357,101 @@ def main(args):
 
                     html_list.extend(
                         [
-                            f"<div>Parcel #: {parcel}</div>",
-                            f"<div>City: {city}</div>",
-                            f"<div>Township: {township}</div>",
-                            f"<div>Tax district: {tax_district}</div>",
-                            f"<div>Neighborhood: {nh}</div>",
-                            f"<div>Legal: {legal_values}</div>",
-                            f"<div>Owner: {owner}</div>",
+                            make_row_div("Parcel #", get(attr, "AKPAR_")),
+                            make_row_div("City", get(attr, "XXCYDS")),
+                            make_row_div("Township", get(attr, "XXTWDS")),
+                            make_row_div("Tax district", get(attr, "XXDSDS")),
+                            make_row_div("Neighborhood", get(attr, "XXNEDS")),
+                            make_row_div(
+                                "Legal", string_map_vals(attr, legal_fields, "; ")
+                            ),
+                            make_row_div("Owner", get(attr, "OWNAM1")),
                         ]
                     )
 
+                    taxpayer_addr = string_map_vals(attr, taxpayer_fields)
+                    if taxpayer_addr:
+                        html_list.append(
+                            make_row_div("Taxpayer address", taxpayer_addr)
+                        )
+
                     grantor = get(attr, "XXGNM1")
                     if grantor and grantor != "UNKNOWN OWNER":
-                        html_list.append(f"<div>Grantor: {grantor}</div>")
-
-                    qualified = get(attr, "XXQCDS")
-                    if qualified:
-                        html_list.append(f"<div>Qualified: {qualified}</div>")
-
-                    desc2 = get(attr, "AHDESC")
-                    if desc2:
-                        html_list.append(f"<div>Description: {desc2}; {desc}</div>")
-                    else:
-                        html_list.append(f"<div>Description: {desc}</div>")
+                        html_list.append(make_row_div("Grantor", grantor))
 
                     year_sold = get(attr, "AMDTSL")
                     if year_sold:
-                        html_list.append(f"<div>Year sold: {str(year_sold)[:4]}</div>")
+                        html_list.append(make_row_div("Year sold", str(year_sold)[:4]))
+
+                    sales_amount = get(attr, "AMSLAM")
+                    if sales_amount:
+                        html_list.append(
+                            make_row_div("Sales amount", fmt_number(sales_amount, True))
+                        )
+
+                    sales_inst = get(attr, "XXSIDS")
+                    if sales_inst:
+                        html_list.append(make_row_div("Sales inst.", sales_inst))
+
+                    qualified = get(attr, "XXQCDS")
+                    if qualified:
+                        html_list.append(make_row_div("Qualified", qualified))
+
+                    desc = get(attr, "XXDDC1")
+                    desc2 = get(attr, "AHDESC")
+
+                    if desc2:
+                        html_list.append(
+                            make_row_div("Description", f"{desc2}; {desc}")
+                        )
+                    else:
+                        html_list.append(make_row_div("Description", desc))
 
                     if year:
-                        qlty_grade = get(attr, "XXQGDS")
-                        sq_feet = f'{int(get(attr, "AHFNAR")):,}'
-                        stories = get(attr, "XGSTPR")
-                        basement = get(attr, "XXBMYN")
-                        fmv = f'${get(attr, "JMTCTM"):,}'
-
                         html_list.extend(
                             [
-                                f"<div>Year built: <strong>{year}</strong></div>",
-                                f"<div>Grade: {qlty_grade}</div>",
-                                f"<div>Market value: <strong>{fmv}</strong></div>",
-                                f"<div>Sq. feet: {sq_feet}</div>",
-                                f"<div>Basement: {basement}</div>",
-                                f"<div>Stories: {stories}</div>",
+                                make_row_div("Quality grade", get(attr, "AHQGCD")),
+                                make_row_div("Year built", year, True),
+                                make_row_div(
+                                    "Market value",
+                                    fmt_number(get(attr, "JMTCTM"), True),
+                                    True,
+                                ),
+                                make_row_div(
+                                    "Sq. feet", fmt_number(int(get(attr, "AHFNAR")))
+                                ),
+                                make_row_div("Stories", get(attr, "XGSTPR")),
                             ]
                         )
 
                         bedrooms = get(attr, "AHBED_")
                         if bedrooms:
-                            html_list.append(f"<div>Bedrooms: {bedrooms}</div>")
+                            html_list.append(make_row_div("Bedrooms", bedrooms))
 
                         bathrooms = get(attr, "AHBTH_")
                         if bathrooms:
-                            html_list.append(f"<div>Bathrooms: {bathrooms}</div>")
+                            html_list.append(make_row_div("Bathrooms", bathrooms))
+
+                        basement = get(attr, "XXBMYN")
+                        if basement and basement == "Y":
+                            html_list.append(make_row_div("Basement", "✓"))
+
+                        garage = get(attr, "XXGYN")
+                        if garage and garage == "Y":
+                            html_list.append(make_row_div("Attached garage", "✓"))
 
                     else:
-                        land_luv = f'${get(attr, "AKLCPR"):,}'
                         html_list.append(
-                            f"<div>Land value: <strong>{land_luv}</strong></div>"
+                            make_row_div(
+                                "Land value",
+                                fmt_number(get(attr, "AKLCPR"), True),
+                                True,
+                            )
                         )
 
+                    acres = get(attr, "ACRES")
                     if acres:
-                        html_list.append(f"<div>Acreage: <strong>{acres:.2f}</strong></div>")
+                        html_list.append(make_row_div("Acreage", f"{acres:.2f}", True))
 
                     html_list.append("</div>")
                     popup_html = "".join(html_list)
